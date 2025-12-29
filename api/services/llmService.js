@@ -1,32 +1,15 @@
-import requests
-from bs4 import BeautifulSoup
-from openai import OpenAI
-import httpx
-from data import presentation_json
-import re
+const OpenAI = require("openai");
+const config = require("../config");
 
-# Step 1: Fetch documentation text
-def fetch_doc_text(url):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, "html.parser")
-    return soup.get_text(separator="\n")
+// Initialize OpenAI client
+const openaiClient = new OpenAI({
+  apiKey: config.LLM_API_KEY,
+  baseURL: config.LLM_BASE_URL,
+});
 
-# Your pptxgenjs docs link
-doc_link = "https://gitbrent.github.io/PptxGenJS/"
-doc_text = fetch_doc_text(doc_link)
 
-# Step 2: Setup OpenAI client
-openai_client = OpenAI(
-    api_key="none",
-    base_url="https://infin",
-    http_client=httpx.Client(verify=False),
-)
-
-# Step 3: Prepare LLM input
-llm_input = [
-    {
-        "role": "system",
-        "content": """You are a professional pptxgenjs code generator. I will provide JSON representing a Y5T presentation. You MUST generate a working JavaScript output that creates a PPTX file - no blank slides allowed.  
+function getSystemPrompt() {
+  return `You are a professional pptxgenjs code generator. I will provide JSON representing a Y5T presentation. You MUST generate a working JavaScript output that creates a PPTX file - no blank slides allowed.  
 Follow this structured reasoning process internally (DO NOT show these thoughts to the user):
 
 Chain-of-Thought Reasoning:
@@ -122,7 +105,7 @@ async function generatePresentation() {
     const scaleY = PPTX_PX_H / designPxH;
 
     if (slideData.background) {
-      const m = slideData.background?.match(/\d+/g);
+      const m = slideData.background?.match(/\\d+/g);
       if (m) {
         const rgb = m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
         slide.background = { color: rgb };
@@ -143,7 +126,7 @@ async function generatePresentation() {
       if (obj.type === 'Textbox') {
         let rgb = '000000';
         try {
-          const m = (obj.color || obj.fill || '').match(/\d+/g);
+          const m = (obj.color || obj.fill || '').match(/\\d+/g);
           if (m) rgb = m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
         } catch (e) {}
         let align = 'left';
@@ -186,7 +169,7 @@ async function generatePresentation() {
           (((obj.width || 0) * (obj.scaleX || 1)) * scaleX >= (PPTX_PX_W * 0.95)) &&
           (((obj.height || 0) * (obj.scaleY || 1)) * scaleY >= (PPTX_PX_H * 0.95));
         if (isStageRect) {
-          const m = (obj.fill || 'rgba(255,255,255,1)').match(/\d+/g);
+          const m = (obj.fill || 'rgba(255,255,255,1)').match(/\\d+/g);
           if (m) {
             const bgRgb = m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
             slide.background = { color: bgRgb };
@@ -195,7 +178,7 @@ async function generatePresentation() {
         }
         let rgb = 'FFFFFF';
         try {
-          const m = (obj.fill || '').match(/\d+/g);
+          const m = (obj.fill || '').match(/\\d+/g);
           if (m) rgb = m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
         } catch (e) {}
         slide.addShape(pptx.ShapeType.rect, {
@@ -231,13 +214,13 @@ async function generatePresentation() {
               slide.addImage({ data: imageData, ...imageIn });
             }
           } catch (error) {
-            console.error(`Error loading image ${varKey}:`, error);
+            console.error(\`Error loading image \${varKey}:\`, error);
           }
         } else {
           try {
             slide.addImage({ path: obj.src, ...imageIn });
           } catch (error) {
-            console.error(`Error loading regular image ${obj.src}:`, error);
+            console.error(\`Error loading regular image \${obj.src}:\`, error);
           }
         }
       }
@@ -252,7 +235,7 @@ generatePresentation().catch(console.error);
 
 LAYOUT SAFETY RULES:
 - Ensure all text, shapes, and images stay fully within the PPTX slide boundaries.
-- For textboxes: use `fit: 'shrink'` or wrap text inside their width/height if content is too long.
+- For textboxes: use \`fit: 'shrink'\` or wrap text inside their width/height if content is too long.
 - Do not alter text alignment, positioning, or formatting when shrinking/wrapping.
 - If object coordinates would place it outside the slide, clamp its position so it remains visible.
 
@@ -285,64 +268,94 @@ ERROR PREVENTION CHECKLIST:
 
 FINAL STEP:
 Respond ONLY with one complete JavaScript code block.
-Start with ```javascript
-End with ```
-Do not include anything else before or after the code.""",
+Start with \`\`\`javascript
+End with \`\`\`
+Do not include anything else before or after the code.`;
+}
+
+/**
+ * Generate PPTX code using LLM
+ * @param {Object} presentationJson - Clean presentation JSON (with slides array)
+ * @param {string} presentationId - MongoDB presentation ID
+ * @returns {string} - Generated JavaScript code
+ */
+async function generatePptxCode(presentationJson, presentationId) {
+  console.log("🤖 Calling LLM to generate PPTX code...");
+
+  const messages = [
+    {
+      role: "system",
+      content: getSystemPrompt(),
     },
     {
-        "role": "user",
-        "content": f"""
-                this is the presentation json: {presentation_json}
-            """,
+      role: "user",
+      content: `this is the presentation json: ${JSON.stringify(
+        presentationJson
+      )}`,
     },
-]
+  ];
 
+  try {
+    const response = await openaiClient.chat.completions.create({
+      model: config.LLM_MODEL,
+      messages: messages,
+      max_tokens: 4096,
+      temperature: 0,
+    });
 
-def extract_code(output_text, content_type, fallback_lang):
-    """
-    Extracts code from <xaiArtifact> tags or from ``` code blocks if artifacts are missing.
-    """
-    # Try <xaiArtifact> first
-    match = re.search(
-        rf"<xaiArtifact[^>]*contentType\s*=\s*\"{content_type}\"[^>]*>(.*?)</xaiArtifact>",
-        output_text,
-        re.DOTALL | re.IGNORECASE,
-    )
-    if match:
-        return match.group(1).strip()
+    const outputText = response.choices[0].message.content;
+    console.log("✅ LLM response received");
 
-    # Fallback to ```lang``` code block
-    match = re.search(
-        rf"```{fallback_lang}(.*?)```", output_text, re.DOTALL | re.IGNORECASE
-    )
-    if match:
-        return match.group(1).strip()
+    // Extract JavaScript code from response
+    const jsCode = extractCodeFromResponse(outputText);
 
-    return None
+    if (!jsCode) {
+      throw new Error("No JavaScript code found in LLM response");
+    }
 
+    return jsCode;
+  } catch (error) {
+    console.error("❌ LLM call failed:", error);
+    throw error;
+  }
+}
 
-def main():
-    try:
-        llm_response = openai_client.chat.completions.create(
-            model="meta/llama-3.3-70b-instruct",
-            messages=llm_input,
-            max_tokens=4096,  # enough for HTML + JS
-            temperature=0,
-        )
-        output_text = llm_response.choices[0].message.content
-        print("Raw LLM Response (Preview):\n", output_text[:500], "...")
+/**
+ * Extract JavaScript code from LLM response (same as R&D extract_code)
+ * @param {string} outputText - Raw LLM output
+ * @returns {string|null} - Extracted JavaScript code
+ */
+function extractCodeFromResponse(outputText) {
+  // Try <xaiArtifact> first (for some LLMs)
+  const artifactMatch = outputText.match(
+    /<xaiArtifact[^>]*contentType\s*=\s*"application\/javascript"[^>]*>([\s\S]*?)<\/xaiArtifact>/i
+  );
+  if (artifactMatch) {
+    return artifactMatch[1].trim();
+  }
 
-        js_code = extract_code(output_text, "application/javascript", "javascript")
-        if js_code:
-            with open("presentation.js", "w", encoding="utf-8") as f:
-                f.write(js_code)
-            print("✅ Saved presentation.js")
-        else:
-            print("⚠️ No JavaScript code found.")
+  // Try to find code in ```javascript``` blocks
+  const jsMatch = outputText.match(/```javascript([\s\S]*?)```/i);
+  if (jsMatch) {
+    return jsMatch[1].trim();
+  }
 
-    except Exception as e:
-        print(e)
+  // Try to find code in ```js``` blocks
+  const jsMatch2 = outputText.match(/```js([\s\S]*?)```/i);
+  if (jsMatch2) {
+    return jsMatch2[1].trim();
+  }
 
+  // Try to find code in generic ``` blocks
+  const genericMatch = outputText.match(/```([\s\S]*?)```/);
+  if (genericMatch) {
+    return genericMatch[1].trim();
+  }
 
-if __name__ == "__main__":
-    main()
+  return null;
+}
+
+module.exports = {
+  generatePptxCode,
+  extractCodeFromResponse,
+};
